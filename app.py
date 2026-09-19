@@ -2,469 +2,1050 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
 
-# ---------------------------------------------------------
-# APL Logistics | Project 3
+# ============================================================
+# APL LOGISTICS - PROJECT 3
 # Delivery Performance, Delay Risk & Logistics Efficiency
-# ---------------------------------------------------------
+# ============================================================
 
 st.set_page_config(
     page_title="APL Logistics | Delivery Intelligence",
     page_icon="🚚",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
 
-# ---------- Theme / CSS ----------
-st.markdown("""
-<style>
-    .main { background-color: #f6f9fb; }
-    .block-container { padding-top: 1.2rem; }
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+DATA_URL = (
+    "https://github.com/nehaabhimanr01/"
+    "APL-Logistics-Delivery-Performance-Analysis/"
+    "releases/download/v1.0/APL_Logistics.csv"
+)
+
+REQUIRED_COLUMNS = [
+    "Days for shipping (real)",
+    "Days for shipment (scheduled)",
+    "Late_delivery_risk",
+    "Shipping Mode",
+    "Order Region",
+    "Market",
+    "Customer Segment",
+    "Benefit per order"
+]
+
+# ============================================================
+# CUSTOM CSS
+# ============================================================
+
+st.markdown(
+    """
+    <style>
+
+    .main {
+        background-color: #F7F9FC;
+    }
+
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+    }
+
     .hero {
-        background: linear-gradient(135deg, #0D1B2A 0%, #17344A 100%);
+        background: linear-gradient(135deg, #0D1B2A, #1B4965);
         padding: 1.5rem 1.7rem;
-        border-radius: 18px;
+        border-radius: 14px;
         color: white;
         margin-bottom: 1.2rem;
     }
-    .hero h1 { margin: 0; font-size: 2rem; }
-    .hero p { margin: .35rem 0 0; color: #d9e6ed; }
-    .section-title {
-        color: #0D1B2A;
-        font-size: 1.25rem;
-        font-weight: 700;
-        margin-top: .7rem;
-        margin-bottom: .5rem;
+
+    .hero h1 {
+        margin: 0;
+        font-size: 2rem;
     }
-    .note {
-        background: #eaf7f5;
-        border-left: 5px solid #2A9D8F;
-        padding: .75rem 1rem;
-        border-radius: 8px;
-        color: #18344A;
+
+    .hero p {
+        margin-top: 0.4rem;
+        color: #D9E6EF;
+        font-size: 1rem;
     }
-    .warning {
-        background: #fff7e7;
-        border-left: 5px solid #F4A623;
-        padding: .75rem 1rem;
-        border-radius: 8px;
-        color: #5d4a1b;
-    }
-    .small { color: #607486; font-size: .82rem; }
-    [data-testid="stMetric"] {
+
+    .insight {
         background: white;
-        border: 1px solid #dbe5ea;
-        padding: .8rem;
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(13,27,42,.04);
+        border-left: 5px solid #2A9D8F;
+        padding: 0.9rem 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        box-shadow: 0 1px 5px rgba(0,0,0,0.06);
     }
-</style>
-""", unsafe_allow_html=True)
 
-# ---------- Data ----------
-@st.cache_data
-def load_data():
-    path = "data/APL_Logistics.csv"
-    df = pd.read_csv(path, encoding="latin1")
+    div[data-testid="stMetric"] {
+        background-color: white;
+        padding: 0.8rem;
+        border-radius: 10px;
+        box-shadow: 0 1px 5px rgba(0,0,0,0.06);
+    }
 
-    required = [
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# ============================================================
+# DATA PREPARATION
+# ============================================================
+
+def prepare_data(data):
+
+    data = data.copy()
+
+    missing_columns = [
+        column for column in REQUIRED_COLUMNS
+        if column not in data.columns
+    ]
+
+    if missing_columns:
+        raise ValueError(
+            "Missing required columns: "
+            + ", ".join(missing_columns)
+        )
+
+    data = data[REQUIRED_COLUMNS].copy()
+
+    numeric_columns = [
         "Days for shipping (real)",
         "Days for shipment (scheduled)",
         "Late_delivery_risk",
-        "Shipping Mode",
-        "Order Region",
-        "Market",
-        "Customer Segment",
-        "Delivery Status",
-        "Order Country",
-        "Order City",
-        "Benefit per order",
-        "Sales",
-        "Order Profit Per Order",
+        "Benefit per order"
     ]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(f"Required columns are missing: {missing}")
 
-    df["Delivery Gap"] = (
-        pd.to_numeric(df["Days for shipping (real)"], errors="coerce")
-        - pd.to_numeric(df["Days for shipment (scheduled)"], errors="coerce")
+    for column in numeric_columns:
+        data[column] = pd.to_numeric(
+            data[column],
+            errors="coerce"
+        )
+
+    # --------------------------------------------------------
+    # Delivery variance
+    # Positive = late
+    # Negative = early
+    # Zero = exactly on schedule
+    # --------------------------------------------------------
+
+    data["Delivery Variance"] = (
+        data["Days for shipping (real)"]
+        - data["Days for shipment (scheduled)"]
     )
 
-    df["Delay Class"] = np.select(
-        [
-            df["Delivery Gap"] > 0,
-            df["Delivery Gap"] < 0,
+    # --------------------------------------------------------
+    # Delivery status
+    # --------------------------------------------------------
+
+    data["Delivery Status"] = np.where(
+        data["Late_delivery_risk"].fillna(0).astype(int) == 1,
+        "At Risk / Late",
+        "On Time / Not at Risk"
+    )
+
+    # --------------------------------------------------------
+    # Delay category
+    # --------------------------------------------------------
+
+    data["Delay Category"] = pd.cut(
+        data["Delivery Variance"],
+        bins=[
+            -np.inf,
+            -1,
+            0,
+            1,
+            np.inf
         ],
-        ["Delayed", "Early"],
-        default="On-time",
+        labels=[
+            "Early",
+            "On Schedule",
+            "1 Day Late",
+            "2+ Days Late"
+        ]
     )
 
-    df["Late_delivery_risk"] = pd.to_numeric(
-        df["Late_delivery_risk"], errors="coerce"
-    ).fillna(0)
+    return data
 
-    return df
+
+# ============================================================
+# LOAD DATA
+# ============================================================
+
+@st.cache_data(show_spinner="Loading APL Logistics dataset...")
+def load_data():
+
+    data = pd.read_csv(DATA_URL)
+
+    return prepare_data(data)
 
 
 try:
+
     df = load_data()
-except Exception as e:
-    st.error("The dashboard could not load the supplied dataset.")
-    st.exception(e)
-    st.stop()
+    source_name = "GitHub v1.0 Release"
 
-# ---------- Header ----------
-st.markdown("""
-<div class="hero">
-    <h1>🚚 APL Logistics — Delivery Intelligence Dashboard</h1>
-    <p>Project 3 • Delivery Performance, Delay Risk & Logistics Efficiency Analysis</p>
-</div>
-""", unsafe_allow_html=True)
+except Exception as error:
 
-# ---------- Sidebar filters ----------
-st.sidebar.header("Dashboard Filters")
+    st.sidebar.warning(
+        "The GitHub dataset could not be loaded."
+    )
 
-def options(col):
-    return sorted(df[col].dropna().astype(str).unique().tolist())
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload APL_Logistics.csv",
+        type=["csv"]
+    )
+
+    if uploaded_file is None:
+
+        st.title("APL Logistics Delivery Intelligence")
+
+        st.error(
+            "Dataset could not be loaded automatically. "
+            "Please upload APL_Logistics.csv using the sidebar."
+        )
+
+        st.stop()
+
+    try:
+
+        df = prepare_data(
+            pd.read_csv(uploaded_file)
+        )
+
+        source_name = "Uploaded CSV"
+
+    except Exception as upload_error:
+
+        st.error(
+            f"Unable to process the uploaded file: {upload_error}"
+        )
+
+        st.stop()
+
+
+# ============================================================
+# SIDEBAR
+# ============================================================
+
+st.sidebar.title("🚚 APL Logistics")
+st.sidebar.caption(
+    "Project 3 | Delivery Intelligence"
+)
+
+st.sidebar.markdown("---")
+
+st.sidebar.success(
+    f"Data source: {source_name}"
+)
+
+st.sidebar.caption(
+    f"Records: {len(df):,}"
+)
+
+st.sidebar.markdown("---")
+
+st.sidebar.subheader("Dashboard Filters")
+
+shipping_modes = sorted(
+    df["Shipping Mode"].dropna().unique().tolist()
+)
+
+regions = sorted(
+    df["Order Region"].dropna().unique().tolist()
+)
+
+markets = sorted(
+    df["Market"].dropna().unique().tolist()
+)
+
+segments = sorted(
+    df["Customer Segment"].dropna().unique().tolist()
+)
 
 selected_modes = st.sidebar.multiselect(
     "Shipping Mode",
-    options("Shipping Mode"),
-    default=options("Shipping Mode"),
+    shipping_modes,
+    default=shipping_modes
 )
+
 selected_regions = st.sidebar.multiselect(
     "Order Region",
-    options("Order Region"),
-    default=options("Order Region"),
+    regions,
+    default=regions
 )
+
 selected_markets = st.sidebar.multiselect(
     "Market",
-    options("Market"),
-    default=options("Market"),
+    markets,
+    default=markets
 )
+
 selected_segments = st.sidebar.multiselect(
     "Customer Segment",
-    options("Customer Segment"),
-    default=options("Customer Segment"),
+    segments,
+    default=segments
 )
 
-filtered = df[
-    df["Shipping Mode"].astype(str).isin(selected_modes)
-    & df["Order Region"].astype(str).isin(selected_regions)
-    & df["Market"].astype(str).isin(selected_markets)
-    & df["Customer Segment"].astype(str).isin(selected_segments)
+# ============================================================
+# FILTER DATA
+# ============================================================
+
+filtered_df = df[
+    df["Shipping Mode"].isin(selected_modes)
+    & df["Order Region"].isin(selected_regions)
+    & df["Market"].isin(selected_markets)
+    & df["Customer Segment"].isin(selected_segments)
 ].copy()
 
-if filtered.empty:
-    st.warning("No records match the selected filters. Please widen the filters.")
+if filtered_df.empty:
+
+    st.warning(
+        "No records match the selected filters. "
+        "Please broaden your selections."
+    )
+
     st.stop()
 
-# ---------- KPI calculations ----------
-total = len(filtered)
-delayed = (filtered["Delivery Gap"] > 0).mean() * 100
-on_time = (filtered["Delivery Gap"] <= 0).mean() * 100
-avg_gap = filtered["Delivery Gap"].mean()
-risk_ratio = filtered["Late_delivery_risk"].mean() * 100
-actual_avg = filtered["Days for shipping (real)"].mean()
-scheduled_avg = filtered["Days for shipment (scheduled)"].mean()
-benefit_avg = filtered["Benefit per order"].mean()
 
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Records", f"{total:,}")
-c2.metric("On-time / Early", f"{on_time:.1f}%")
-c3.metric("Delayed", f"{delayed:.1f}%")
-c4.metric("Avg Delivery Gap", f"{avg_gap:.2f} days")
-c5.metric("Late-risk Ratio", f"{risk_ratio:.1f}%")
+# ============================================================
+# HEADER
+# ============================================================
 
 st.markdown(
-    '<div class="small">Delivery Gap = actual shipping days − scheduled shipping days. '
-    'Delayed = gap &gt; 0; On-time = gap = 0; Early = gap &lt; 0.</div>',
-    unsafe_allow_html=True,
+    """
+    <div class="hero">
+
+        <h1>🚚 APL Logistics | Delivery Intelligence</h1>
+
+        <p>
+        Delivery Performance • Delay Risk • Logistics Efficiency
+        </p>
+
+    </div>
+    """,
+    unsafe_allow_html=True
 )
 
-# ---------- Tabs ----------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["📊 Overview", "⚠️ Delay Risk", "🚚 Shipping Mode", "🌍 Geography", "👥 Customer Segment"]
+st.caption(
+    f"Showing {len(filtered_df):,} of {len(df):,} records"
 )
 
-# ---------- Overview ----------
-with tab1:
-    st.markdown('<div class="section-title">Delivery Performance Overview</div>', unsafe_allow_html=True)
 
-    a, b = st.columns(2)
+# ============================================================
+# KPI CALCULATIONS
+# ============================================================
 
-    with a:
-        cls = (
-            filtered["Delay Class"]
-            .value_counts()
-            .reindex(["Delayed", "On-time", "Early"], fill_value=0)
-            .reset_index()
-        )
-        cls.columns = ["Delay Class", "Orders"]
-        fig = px.bar(
-            cls,
-            x="Delay Class",
-            y="Orders",
-            text="Orders",
-            color="Delay Class",
-            color_discrete_map={
-                "Delayed": "#D94B4B",
-                "On-time": "#2A9D8F",
-                "Early": "#F4A623",
-            },
-            title="Orders by Delivery Classification",
-        )
-        fig.update_layout(showlegend=False, height=360, plot_bgcolor="white")
-        st.plotly_chart(fig, use_container_width=True)
+total_shipments = len(filtered_df)
 
-    with b:
-        comparison = pd.DataFrame({
-            "Measure": ["Scheduled", "Actual"],
-            "Days": [scheduled_avg, actual_avg],
-        })
-        fig = px.bar(
-            comparison,
-            x="Measure",
-            y="Days",
-            text_auto=".2f",
-            color="Measure",
-            color_discrete_sequence=["#2A9D8F", "#F4A623"],
-            title="Average Scheduled vs Actual Shipping Time",
-        )
-        fig.update_layout(showlegend=False, height=360, plot_bgcolor="white")
-        st.plotly_chart(fig, use_container_width=True)
+late_shipments = int(
+    filtered_df["Late_delivery_risk"].sum()
+)
 
-    st.markdown(
-        f'<div class="note"><b>Current filtered view:</b> {total:,} records with an average '
-        f'delivery gap of <b>{avg_gap:.2f} days</b>. Average benefit per order is '
-        f'<b>${benefit_avg:.2f}</b>.</div>',
-        unsafe_allow_html=True,
+late_risk_rate = (
+    late_shipments / total_shipments * 100
+)
+
+avg_actual_days = filtered_df[
+    "Days for shipping (real)"
+].mean()
+
+avg_scheduled_days = filtered_df[
+    "Days for shipment (scheduled)"
+].mean()
+
+avg_variance = filtered_df[
+    "Delivery Variance"
+].mean()
+
+avg_benefit = filtered_df[
+    "Benefit per order"
+].mean()
+
+
+# ============================================================
+# KPI DASHBOARD
+# ============================================================
+
+st.subheader("📊 Executive KPI Overview")
+
+k1, k2, k3, k4, k5, k6 = st.columns(6)
+
+k1.metric(
+    "Total Shipments",
+    f"{total_shipments:,}"
+)
+
+k2.metric(
+    "At-Risk Shipments",
+    f"{late_shipments:,}"
+)
+
+k3.metric(
+    "Late-Risk Rate",
+    f"{late_risk_rate:.1f}%"
+)
+
+k4.metric(
+    "Avg Actual Days",
+    f"{avg_actual_days:.2f}"
+)
+
+k5.metric(
+    "Avg Scheduled Days",
+    f"{avg_scheduled_days:.2f}"
+)
+
+k6.metric(
+    "Avg Benefit / Order",
+    f"{avg_benefit:,.2f}"
+)
+
+
+# ============================================================
+# EXECUTIVE INSIGHTS
+# ============================================================
+
+st.subheader("💡 Executive Insights")
+
+if avg_variance > 0:
+
+    schedule_message = (
+        f"Shipments are averaging "
+        f"{avg_variance:.2f} day(s) beyond the scheduled time."
     )
 
-# ---------- Delay Risk ----------
-with tab2:
-    st.markdown('<div class="section-title">Delay Risk Analysis</div>', unsafe_allow_html=True)
+elif avg_variance < 0:
 
-    a, b = st.columns(2)
-
-    with a:
-        fig = px.histogram(
-            filtered,
-            x="Delivery Gap",
-            nbins=30,
-            color_discrete_sequence=["#2A9D8F"],
-            title="Distribution of Delivery Gap",
-        )
-        fig.add_vline(x=0, line_dash="dash", line_color="#D94B4B")
-        fig.update_layout(height=380, plot_bgcolor="white", xaxis_title="Delivery Gap (days)")
-        st.plotly_chart(fig, use_container_width=True)
-
-    with b:
-        risk_by_class = (
-            filtered.groupby("Delay Class")["Late_delivery_risk"]
-            .mean()
-            .mul(100)
-            .reindex(["Delayed", "On-time", "Early"])
-            .reset_index()
-        )
-        risk_by_class.columns = ["Delay Class", "Risk %"]
-        fig = px.bar(
-            risk_by_class,
-            x="Delay Class",
-            y="Risk %",
-            text_auto=".1f",
-            color="Delay Class",
-            color_discrete_map={
-                "Delayed": "#D94B4B",
-                "On-time": "#2A9D8F",
-                "Early": "#F4A623",
-            },
-            title="Late-delivery-risk by Delay Class",
-        )
-        fig.update_layout(showlegend=False, height=380, plot_bgcolor="white")
-        st.plotly_chart(fig, use_container_width=True)
-
-    delayed_records = filtered[filtered["Delivery Gap"] > 0]
-    if len(delayed_records):
-        alignment = delayed_records["Late_delivery_risk"].mean() * 100
-    else:
-        alignment = 0
-
-    st.markdown(
-        f'<div class="warning"><b>Risk alignment:</b> {alignment:.1f}% of delayed-gap '
-        f'records in the current view have Late_delivery_risk = 1. Keep the calculated '
-        f'Delivery Gap and the supplied risk flag as separate KPIs when building alerts.</div>',
-        unsafe_allow_html=True,
+    schedule_message = (
+        f"Shipments are averaging "
+        f"{abs(avg_variance):.2f} day(s) ahead of schedule."
     )
 
-# ---------- Shipping Mode ----------
-with tab3:
-    st.markdown('<div class="section-title">Shipping Mode Efficiency</div>', unsafe_allow_html=True)
+else:
 
-    mode_perf = (
-        filtered.groupby("Shipping Mode")
-        .agg(
-            Orders=("Delivery Gap", "size"),
-            Delay_Rate=("Delivery Gap", lambda x: (x > 0).mean() * 100),
-            Avg_Gap=("Delivery Gap", "mean"),
-            Risk=("Late_delivery_risk", "mean"),
-        )
-        .reset_index()
-        .sort_values("Delay_Rate", ascending=False)
+    schedule_message = (
+        "Shipments are averaging exactly on the scheduled time."
     )
 
-    a, b = st.columns(2)
-    with a:
-        fig = px.bar(
-            mode_perf,
-            x="Shipping Mode",
-            y="Delay_Rate",
-            text_auto=".1f",
-            color="Delay_Rate",
-            color_continuous_scale=["#2A9D8F", "#F4A623", "#D94B4B"],
-            title="Delay Rate by Shipping Mode",
-        )
-        fig.update_layout(height=400, plot_bgcolor="white", coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
 
-    with b:
-        fig = px.bar(
-            mode_perf,
-            x="Shipping Mode",
-            y="Avg_Gap",
-            text_auto=".2f",
-            color="Avg_Gap",
-            color_continuous_scale=["#2A9D8F", "#F4A623"],
-            title="Average Delivery Gap by Shipping Mode",
-        )
-        fig.update_layout(height=400, plot_bgcolor="white", coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
+risk_level = (
+    "High"
+    if late_risk_rate >= 50
+    else "Moderate"
+    if late_risk_rate >= 25
+    else "Lower"
+)
 
-    display_mode = mode_perf.copy()
-    display_mode["Delay Rate"] = display_mode["Delay_Rate"].map(lambda x: f"{x:.1f}%")
-    display_mode["Avg Gap"] = display_mode["Avg_Gap"].map(lambda x: f"{x:.2f} d")
-    display_mode["Risk"] = display_mode["Risk"].map(lambda x: f"{x*100:.1f}%")
-    display_mode = display_mode[["Shipping Mode", "Orders", "Delay Rate", "Avg Gap", "Risk"]]
-    st.dataframe(display_mode, use_container_width=True, hide_index=True)
+st.markdown(
+    f"""
+    <div class="insight">
+        <b>Delivery Risk:</b>
+        {late_risk_rate:.1f}% of shipments are flagged as
+        late-delivery risk. Current risk level: <b>{risk_level}</b>.
+    </div>
 
-# ---------- Geography ----------
-with tab4:
-    st.markdown('<div class="section-title">Regional & Market Diagnostics</div>', unsafe_allow_html=True)
+    <div class="insight">
+        <b>Schedule Adherence:</b>
+        {schedule_message}
+    </div>
 
-    geo = (
-        filtered.groupby("Order Region")
-        .agg(
-            Orders=("Delivery Gap", "size"),
-            Delay_Rate=("Delivery Gap", lambda x: (x > 0).mean() * 100),
-            Avg_Gap=("Delivery Gap", "mean"),
-        )
-        .reset_index()
-        .sort_values("Delay_Rate", ascending=False)
+    <div class="insight">
+        <b>Commercial Indicator:</b>
+        Average benefit per order is
+        <b>{avg_benefit:,.2f}</b>.
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# ============================================================
+# DELIVERY PERFORMANCE
+# ============================================================
+
+st.subheader("📦 Delivery Performance Analysis")
+
+col1, col2 = st.columns(2)
+
+# ------------------------------------------------------------
+# Risk Distribution
+# ------------------------------------------------------------
+
+with col1:
+
+    status_data = (
+        filtered_df[
+            "Delivery Status"
+        ]
+        .value_counts()
+        .rename_axis("Delivery Status")
+        .reset_index(name="Shipments")
     )
 
-    market = (
-        filtered.groupby("Market")
-        .agg(
-            Orders=("Delivery Gap", "size"),
-            Delay_Rate=("Delivery Gap", lambda x: (x > 0).mean() * 100),
-        )
-        .reset_index()
-        .sort_values("Delay_Rate", ascending=False)
+    fig_status = px.pie(
+        status_data,
+        names="Delivery Status",
+        values="Shipments",
+        hole=0.55,
+        title="Delivery Risk Distribution"
     )
 
-    a, b = st.columns(2)
-    with a:
-        fig = px.bar(
-            geo.head(12),
-            x="Delay_Rate",
-            y="Order Region",
-            orientation="h",
-            text_auto=".1f",
-            color="Delay_Rate",
-            color_continuous_scale=["#2A9D8F", "#F4A623", "#D94B4B"],
-            title="Highest Regional Delay Rates",
+    fig_status.update_layout(
+        margin=dict(
+            l=10,
+            r=10,
+            t=55,
+            b=10
         )
-        fig.update_layout(height=460, plot_bgcolor="white", coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with b:
-        fig = px.bar(
-            market,
-            x="Market",
-            y="Delay_Rate",
-            text_auto=".1f",
-            color="Delay_Rate",
-            color_continuous_scale=["#2A9D8F", "#F4A623", "#D94B4B"],
-            title="Delay Rate by Market",
-        )
-        fig.update_layout(height=460, plot_bgcolor="white", coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.caption(
-        "The supplied dataset contains latitude/longitude fields, but this first dashboard version "
-        "uses region and market aggregations rather than exposing customer-level location details."
     )
 
-# ---------- Customer Segment ----------
-with tab5:
-    st.markdown('<div class="section-title">Customer Segment Impact</div>', unsafe_allow_html=True)
-
-    seg = (
-        filtered.groupby("Customer Segment")
-        .agg(
-            Orders=("Delivery Gap", "size"),
-            Delay_Rate=("Delivery Gap", lambda x: (x > 0).mean() * 100),
-            Avg_Gap=("Delivery Gap", "mean"),
-            Avg_Benefit=("Benefit per order", "mean"),
-        )
-        .reset_index()
-        .sort_values("Delay_Rate", ascending=False)
+    st.plotly_chart(
+        fig_status,
+        use_container_width=True
     )
 
-    a, b = st.columns(2)
-    with a:
-        fig = px.bar(
-            seg,
-            x="Customer Segment",
-            y="Delay_Rate",
-            text_auto=".1f",
-            color="Delay_Rate",
-            color_continuous_scale=["#2A9D8F", "#F4A623", "#D94B4B"],
-            title="Delay Rate by Customer Segment",
-        )
-        fig.update_layout(height=390, plot_bgcolor="white", coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
 
-    with b:
-        fig = px.bar(
-            seg,
-            x="Customer Segment",
-            y="Avg_Gap",
-            text_auto=".2f",
-            color="Avg_Gap",
-            color_continuous_scale=["#2A9D8F", "#F4A623"],
-            title="Average Delivery Gap by Segment",
-        )
-        fig.update_layout(height=390, plot_bgcolor="white", coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
+# ------------------------------------------------------------
+# Delay Profile
+# ------------------------------------------------------------
 
-    st.dataframe(
-        seg.assign(
-            Delay_Rate=seg["Delay_Rate"].map(lambda x: f"{x:.1f}%"),
-            Avg_Gap=seg["Avg_Gap"].map(lambda x: f"{x:.2f} d"),
-            Avg_Benefit=seg["Avg_Benefit"].map(lambda x: f"${x:.2f}"),
-        )[["Customer Segment", "Orders", "Delay_Rate", "Avg_Gap", "Avg_Benefit"]],
-        use_container_width=True,
-        hide_index=True,
+with col2:
+
+    delay_order = [
+        "Early",
+        "On Schedule",
+        "1 Day Late",
+        "2+ Days Late"
+    ]
+
+    delay_data = (
+        filtered_df[
+            "Delay Category"
+        ]
+        .value_counts()
+        .reindex(
+            delay_order,
+            fill_value=0
+        )
+        .rename_axis("Delay Category")
+        .reset_index(name="Shipments")
     )
 
-# ---------- Footer ----------
+    fig_delay = px.bar(
+        delay_data,
+        x="Delay Category",
+        y="Shipments",
+        title="Delivery Delay Profile",
+        text_auto=".2s"
+    )
+
+    fig_delay.update_layout(
+        xaxis_title="Delivery Status",
+        yaxis_title="Number of Shipments"
+    )
+
+    st.plotly_chart(
+        fig_delay,
+        use_container_width=True
+    )
+
+
+# ============================================================
+# SHIPPING MODE ANALYSIS
+# ============================================================
+
+st.subheader("🚢 Shipping Mode Efficiency")
+
+mode_summary = (
+    filtered_df
+    .groupby("Shipping Mode", as_index=False)
+    .agg(
+        Shipments=("Shipping Mode", "size"),
+        Late_Risk_Rate=(
+            "Late_delivery_risk",
+            "mean"
+        ),
+        Avg_Actual_Days=(
+            "Days for shipping (real)",
+            "mean"
+        ),
+        Avg_Scheduled_Days=(
+            "Days for shipment (scheduled)",
+            "mean"
+        ),
+        Avg_Variance=(
+            "Delivery Variance",
+            "mean"
+        ),
+        Avg_Benefit=(
+            "Benefit per order",
+            "mean"
+        )
+    )
+)
+
+mode_summary["Late_Risk_Rate"] *= 100
+
+fig_mode = px.bar(
+    mode_summary.sort_values(
+        "Late_Risk_Rate",
+        ascending=False
+    ),
+    x="Shipping Mode",
+    y="Late_Risk_Rate",
+    text=mode_summary.sort_values(
+        "Late_Risk_Rate",
+        ascending=False
+    )["Late_Risk_Rate"].map(
+        lambda value: f"{value:.1f}%"
+    ),
+    title="Late-Delivery Risk by Shipping Mode"
+)
+
+fig_mode.update_layout(
+    xaxis_title="Shipping Mode",
+    yaxis_title="Late-Risk Rate (%)"
+)
+
+st.plotly_chart(
+    fig_mode,
+    use_container_width=True
+)
+
+st.dataframe(
+    mode_summary.style.format(
+        {
+            "Late_Risk_Rate": "{:.1f}%",
+            "Avg_Actual_Days": "{:.2f}",
+            "Avg_Scheduled_Days": "{:.2f}",
+            "Avg_Variance": "{:.2f}",
+            "Avg_Benefit": "{:,.2f}"
+        }
+    ),
+    use_container_width=True,
+    hide_index=True
+)
+
+
+# ============================================================
+# MARKET ANALYSIS
+# ============================================================
+
+st.subheader("🌍 Market-Level Risk Analysis")
+
+market_summary = (
+    filtered_df
+    .groupby("Market", as_index=False)
+    .agg(
+        Shipments=("Market", "size"),
+        Late_Risk_Rate=(
+            "Late_delivery_risk",
+            "mean"
+        ),
+        Avg_Variance=(
+            "Delivery Variance",
+            "mean"
+        ),
+        Avg_Benefit=(
+            "Benefit per order",
+            "mean"
+        )
+    )
+)
+
+market_summary["Late_Risk_Rate"] *= 100
+
+fig_market = px.bar(
+    market_summary.sort_values(
+        "Late_Risk_Rate",
+        ascending=False
+    ),
+    x="Market",
+    y="Late_Risk_Rate",
+    text=market_summary.sort_values(
+        "Late_Risk_Rate",
+        ascending=False
+    )["Late_Risk_Rate"].map(
+        lambda value: f"{value:.1f}%"
+    ),
+    title="Late-Delivery Risk by Market"
+)
+
+fig_market.update_layout(
+    xaxis_title="Market",
+    yaxis_title="Late-Risk Rate (%)"
+)
+
+st.plotly_chart(
+    fig_market,
+    use_container_width=True
+)
+
+st.dataframe(
+    market_summary.style.format(
+        {
+            "Late_Risk_Rate": "{:.1f}%",
+            "Avg_Variance": "{:.2f}",
+            "Avg_Benefit": "{:,.2f}"
+        }
+    ),
+    use_container_width=True,
+    hide_index=True
+)
+
+
+# ============================================================
+# REGIONAL ANALYSIS
+# ============================================================
+
+st.subheader("🗺️ Regional Delivery Risk")
+
+region_summary = (
+    filtered_df
+    .groupby("Order Region", as_index=False)
+    .agg(
+        Shipments=("Order Region", "size"),
+        Late_Risk_Rate=(
+            "Late_delivery_risk",
+            "mean"
+        ),
+        Avg_Variance=(
+            "Delivery Variance",
+            "mean"
+        ),
+        Avg_Benefit=(
+            "Benefit per order",
+            "mean"
+        )
+    )
+)
+
+region_summary["Late_Risk_Rate"] *= 100
+
+region_chart = (
+    region_summary
+    .sort_values(
+        "Late_Risk_Rate",
+        ascending=False
+    )
+    .head(15)
+)
+
+fig_region = px.bar(
+    region_chart,
+    x="Late_Risk_Rate",
+    y="Order Region",
+    orientation="h",
+    text=region_chart[
+        "Late_Risk_Rate"
+    ].map(
+        lambda value: f"{value:.1f}%"
+    ),
+    title="Highest-Risk Order Regions"
+)
+
+fig_region.update_layout(
+    xaxis_title="Late-Risk Rate (%)",
+    yaxis_title="Order Region"
+)
+
+st.plotly_chart(
+    fig_region,
+    use_container_width=True
+)
+
+
+# ============================================================
+# CUSTOMER SEGMENT ANALYSIS
+# ============================================================
+
+st.subheader("👥 Customer Segment Analysis")
+
+segment_summary = (
+    filtered_df
+    .groupby("Customer Segment", as_index=False)
+    .agg(
+        Shipments=("Customer Segment", "size"),
+        Late_Risk_Rate=(
+            "Late_delivery_risk",
+            "mean"
+        ),
+        Avg_Variance=(
+            "Delivery Variance",
+            "mean"
+        ),
+        Avg_Benefit=(
+            "Benefit per order",
+            "mean"
+        )
+    )
+)
+
+segment_summary["Late_Risk_Rate"] *= 100
+
+fig_segment = px.bar(
+    segment_summary,
+    x="Customer Segment",
+    y="Late_Risk_Rate",
+    text=segment_summary[
+        "Late_Risk_Rate"
+    ].map(
+        lambda value: f"{value:.1f}%"
+    ),
+    title="Late-Delivery Risk by Customer Segment"
+)
+
+fig_segment.update_layout(
+    xaxis_title="Customer Segment",
+    yaxis_title="Late-Risk Rate (%)"
+)
+
+st.plotly_chart(
+    fig_segment,
+    use_container_width=True
+)
+
+st.dataframe(
+    segment_summary.style.format(
+        {
+            "Late_Risk_Rate": "{:.1f}%",
+            "Avg_Variance": "{:.2f}",
+            "Avg_Benefit": "{:,.2f}"
+        }
+    ),
+    use_container_width=True,
+    hide_index=True
+)
+
+
+# ============================================================
+# DELAY VS BENEFIT
+# ============================================================
+
+st.subheader("📈 Delivery Variance vs. Benefit per Order")
+
+relationship_data = (
+    filtered_df
+    .groupby(
+        "Delivery Variance",
+        as_index=False
+    )
+    .agg(
+        Shipments=(
+            "Delivery Variance",
+            "size"
+        ),
+        Avg_Benefit=(
+            "Benefit per order",
+            "mean"
+        )
+    )
+    .sort_values("Delivery Variance")
+)
+
+fig_relationship = px.scatter(
+    relationship_data,
+    x="Delivery Variance",
+    y="Avg_Benefit",
+    size="Shipments",
+    hover_data=["Shipments"],
+    title="Average Benefit by Delivery Variance"
+)
+
+fig_relationship.add_vline(
+    x=0,
+    line_dash="dash"
+)
+
+fig_relationship.update_layout(
+    xaxis_title=(
+        "Delivery Variance "
+        "(Actual Days − Scheduled Days)"
+    ),
+    yaxis_title="Average Benefit per Order"
+)
+
+st.plotly_chart(
+    fig_relationship,
+    use_container_width=True
+)
+
+
+# ============================================================
+# OPERATIONAL RISK MATRIX
+# ============================================================
+
+st.subheader("⚠️ Operational Risk Monitor")
+
+risk_matrix = (
+    filtered_df
+    .groupby(
+        [
+            "Shipping Mode",
+            "Market"
+        ],
+        as_index=False
+    )
+    .agg(
+        Shipments=(
+            "Shipping Mode",
+            "size"
+        ),
+        Late_Risk_Rate=(
+            "Late_delivery_risk",
+            "mean"
+        ),
+        Avg_Variance=(
+            "Delivery Variance",
+            "mean"
+        ),
+        Avg_Benefit=(
+            "Benefit per order",
+            "mean"
+        )
+    )
+)
+
+risk_matrix["Late_Risk_Rate"] *= 100
+
+risk_matrix = risk_matrix.sort_values(
+    [
+        "Late_Risk_Rate",
+        "Shipments"
+    ],
+    ascending=[
+        False,
+        False
+    ]
+)
+
+st.dataframe(
+    risk_matrix.head(20).style.format(
+        {
+            "Late_Risk_Rate": "{:.1f}%",
+            "Avg_Variance": "{:.2f}",
+            "Avg_Benefit": "{:,.2f}"
+        }
+    ),
+    use_container_width=True,
+    hide_index=True
+)
+
+
+# ============================================================
+# DATA-DRIVEN RECOMMENDATIONS
+# ============================================================
+
+st.subheader("🎯 Data-Driven Action Areas")
+
+highest_risk_mode_row = mode_summary.loc[
+    mode_summary["Late_Risk_Rate"].idxmax()
+]
+
+highest_risk_market_row = market_summary.loc[
+    market_summary["Late_Risk_Rate"].idxmax()
+]
+
+highest_risk_region_row = region_summary.loc[
+    region_summary["Late_Risk_Rate"].idxmax()
+]
+
+st.markdown(
+    f"""
+    <div class="insight">
+        <b>1. Shipping Mode:</b>
+        <b>{highest_risk_mode_row['Shipping Mode']}</b>
+        has the highest observed late-risk rate among the
+        selected shipping modes at
+        <b>{highest_risk_mode_row['Late_Risk_Rate']:.1f}%</b>.
+    </div>
+
+    <div class="insight">
+        <b>2. Market:</b>
+        <b>{highest_risk_market_row['Market']}</b>
+        has the highest observed late-risk rate among the
+        selected markets at
+        <b>{highest_risk_market_row['Late_Risk_Rate']:.1f}%</b>.
+    </div>
+
+    <div class="insight">
+        <b>3. Region:</b>
+        <b>{highest_risk_region_row['Order Region']}</b>
+        shows the highest observed late-risk rate among the
+        selected regions at
+        <b>{highest_risk_region_row['Late_Risk_Rate']:.1f}%</b>.
+    </div>
+
+    <div class="insight">
+        <b>4. Schedule Variance:</b>
+        Monitor areas where actual shipping time consistently
+        exceeds scheduled shipping time and investigate the
+        underlying operational bottlenecks.
+    </div>
+
+    <div class="insight">
+        <b>5. Customer Experience:</b>
+        Compare delay risk across customer segments before
+        adjusting service levels, routing policies or
+        shipping-mode allocation.
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# ============================================================
+# DATASET METHODOLOGY
+# ============================================================
+
+with st.expander("🔎 Dataset & Methodology"):
+
+    st.write(
+        "The dashboard uses the sanitized APL Logistics dataset "
+        "provided for Project 3."
+    )
+
+    st.write(
+        f"**Records analysed:** {len(df):,}"
+    )
+
+    st.write(
+        f"**Columns:** {', '.join(REQUIRED_COLUMNS)}"
+    )
+
+    st.write(
+        "**Delivery Variance:** Actual shipping days "
+        "minus scheduled shipping days."
+    )
+
+    st.write(
+        "**Late-Risk Rate:** Percentage of records where "
+        "`Late_delivery_risk = 1`."
+    )
+
+    st.write(
+        "**Positive variance:** Shipment took longer than scheduled."
+    )
+
+    st.write(
+        "**Negative variance:** Shipment was completed earlier "
+        "than scheduled."
+    )
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
 st.markdown("---")
-st.markdown(
-    '<div class="small"><b>Project 3:</b> Delivery Performance, Delay Risk & Logistics Efficiency Analysis • '
-    'Built from the supplied APL Logistics dataset. Customer names, streets and ZIP codes are intentionally '
-    'not displayed in the dashboard.</div>',
-    unsafe_allow_html=True,
+
+st.caption(
+    "APL Logistics | Project 3 — Delivery Performance, "
+    "Delay Risk & Logistics Efficiency Analysis"
 )
