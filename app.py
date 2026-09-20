@@ -397,7 +397,8 @@ avg_benefit = filtered_df[
 
 st.subheader("📊 Executive KPI Overview")
 
-k1, k2, k3, k4, k5, k6 = st.columns(6)
+# KPI Row 1
+k1, k2, k3 = st.columns(3)
 
 k1.metric(
     "Total Shipments",
@@ -414,6 +415,9 @@ k3.metric(
     f"{late_risk_rate:.1f}%"
 )
 
+# KPI Row 2
+k4, k5, k6 = st.columns(3)
+
 k4.metric(
     "Avg Actual Days",
     f"{avg_actual_days:.2f}"
@@ -428,7 +432,6 @@ k6.metric(
     "Avg Benefit / Order",
     f"{avg_benefit:,.2f}"
 )
-
 
 # ============================================================
 # EXECUTIVE INSIGHTS
