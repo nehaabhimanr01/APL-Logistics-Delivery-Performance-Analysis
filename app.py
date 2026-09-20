@@ -74,11 +74,36 @@ st.markdown(
 
     .insight {
         background: white;
+        color: #0D1B2A !important;
         border-left: 5px solid #2A9D8F;
         padding: 0.9rem 1rem;
         border-radius: 8px;
         margin: 0.5rem 0;
         box-shadow: 0 1px 5px rgba(0,0,0,0.06);
+    }
+
+    .insight b {
+        color: #0D1B2A !important;
+    }
+
+    div[data-testid="stMetric"] {
+        background-color: white !important;
+        color: #0D1B2A !important;
+        padding: 0.8rem;
+        border-radius: 10px;
+        box-shadow: 0 1px 5px rgba(0,0,0,0.06);
+    }
+
+    div[data-testid="stMetric"] label {
+        color: #0D1B2A !important;
+    }
+
+    div[data-testid="stMetric"] label p {
+        color: #0D1B2A !important;
+    }
+
+    div[data-testid="stMetricValue"] {
+        color: #0D1B2A !important;
     }
 
     div[data-testid="stMetric"] {
@@ -320,13 +345,11 @@ if filtered_df.empty:
 st.markdown(
     """
     <div class="hero">
-
-        <h1>🚚 APL Logistics | Delivery Intelligence</h1>
-
-        <p>
+        🚚 APL Logistics | Delivery Intelligence
+        <br>
+        <small>
         Delivery Performance • Delay Risk • Logistics Efficiency
-        </p>
-
+        </small>
     </div>
     """,
     unsafe_allow_html=True
